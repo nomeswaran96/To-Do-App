@@ -24,7 +24,15 @@ spec:
         - name: REDIS_URL
           value: "redis://redis:6379"
         - name: JWT_SECRET
-          value: "supersecret_k8s"
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: JWT_SECRET
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: ENCRYPTION_KEY
 ---
 apiVersion: v1
 kind: Service

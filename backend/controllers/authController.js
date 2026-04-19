@@ -3,8 +3,11 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { redisClient } = require('../config/redisClient');
 const { generateMfaSecret, verifyMfaToken } = require('../utils/mfaUtils');
+const { encrypt, decrypt } = require('../utils/encryptionUtils');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
+const JWT_ISSUER = 'todo-app';
+const JWT_AUDIENCE = 'todo-app-users';
 
 const register = async (req, res) => {
     try {
@@ -13,14 +16,18 @@ const register = async (req, res) => {
 
         const lookupKey = `user:lookup:${username}`;
         const existingUserId = await redisClient.get(lookupKey);
-        
+
         if (existingUserId) return res.status(400).json({ message: 'Username already exists' });
 
         const userId = uuidv4();
-        const passwordHash = await bcrypt.hash(password, 10);
-        
+        // Increase salt rounds to 12
+        const passwordHash = await bcrypt.hash(password, 12);
+
         // Generate MFA Setup
         const mfa = await generateMfaSecret(username);
+        
+        // Encrypt MFA Secret before saving
+        const encryptedMfaSecret = encrypt(mfa.base32);
 
         await redisClient.set(lookupKey, userId);
         await redisClient.hSet(`user:${userId}`, {
@@ -28,15 +35,23 @@ const register = async (req, res) => {
             username: username,
             passwordHash: passwordHash,
             mfaEnabled: 'false',
-            mfaSecret: mfa.base32
+            mfaSecret: encryptedMfaSecret
         });
+
+        // Generate a temporary JWT token for activating MFA right after registration
+        const tempToken = jwt.sign(
+            { id: userId, username: username }, 
+            JWT_SECRET, 
+            { expiresIn: '15m', issuer: JWT_ISSUER, audience: JWT_AUDIENCE }
+        );
 
         // For registration, we return the MFA QR code URL so user can set it up immediately.
         res.status(201).json({
             message: 'User registered successfully. Please scan the QR code to set up MFA.',
             userId,
             mfaQrCode: mfa.qrCodeUrl,
-            mfaSecret: mfa.base32
+            mfaSecret: mfa.base32, // send raw text once for display only
+            tempToken
         });
     } catch (error) {
         console.error(error);
@@ -63,21 +78,20 @@ const login = async (req, res) => {
             if (!token) {
                 return res.status(403).json({ message: 'MFA token required', mfaRequired: true });
             }
-            const isTokenValid = verifyMfaToken(user.mfaSecret, token);
+            // Decrypt MFA secret
+            const decryptedSecret = decrypt(user.mfaSecret);
+            const isTokenValid = verifyMfaToken(decryptedSecret, token);
             if (!isTokenValid) {
                 return res.status(401).json({ message: 'Invalid MFA token' });
             }
-        } else if (token) {
-            // Optional: If providing token but it wasn't enabled, we can verify and enable it (first time setup logic)
-            const isTokenValid = verifyMfaToken(user.mfaSecret, token);
-            if (isTokenValid) {
-                await redisClient.hSet(`user:${userId}`, 'mfaEnabled', 'true');
-            } else {
-                return res.status(401).json({ message: 'Invalid MFA token for setup' });
-            }
         }
+        // If mfaEnabled === 'false', just skip MFA check — user can enable it separately
 
-        const jwtToken = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '1d' });
+        const jwtToken = jwt.sign(
+            { id: user.id, username: user.username }, 
+            JWT_SECRET, 
+            { expiresIn: '1d', issuer: JWT_ISSUER, audience: JWT_AUDIENCE }
+        );
 
         res.json({
             message: 'Login successful',
@@ -103,4 +117,24 @@ const getMe = async (req, res) => {
     }
 }
 
-module.exports = { register, login, getMe };
+const enableMfa = async (req, res) => {
+    try {
+        const { token } = req.body;
+        const userId = req.user.id;
+        const user = await redisClient.hGetAll(`user:${userId}`);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        if (user.mfaEnabled === 'true') return res.status(400).json({ message: 'MFA already enabled' });
+
+        const decryptedSecret = decrypt(user.mfaSecret);
+        const isTokenValid = verifyMfaToken(decryptedSecret, token);
+        if (!isTokenValid) return res.status(401).json({ message: 'Invalid MFA token' });
+
+        await redisClient.hSet(`user:${userId}`, 'mfaEnabled', 'true');
+        res.json({ message: 'MFA enabled successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+module.exports = { register, login, getMe, enableMfa };

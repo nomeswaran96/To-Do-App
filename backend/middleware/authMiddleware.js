@@ -9,7 +9,10 @@ const requireAuth = (req, res, next) => {
     const token = authHeader.split(' ')[1];
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret', {
+            issuer: 'todo-app',
+            audience: 'todo-app-users'
+        });
         req.user = decoded; // { id: userId, username: '...' }
         next();
     } catch (err) {

@@ -16,6 +16,7 @@ services:
       - PORT=3000
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=development_secret_key
+      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     depends_on:
       - redis
 

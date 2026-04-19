@@ -30,30 +30,30 @@ const getTodos = async (req, res) => {
 
 const createTodo = async (req, res) => {
     try {
-        const { title } = req.body;
+        const { title, dueDate } = req.body;
         const userId = req.user.id;
 
         if (!title) return res.status(400).json({ message: 'Title is required' });
 
         const todoId = uuidv4();
         const createdAt = new Date().toISOString();
-
-        await redisClient.hSet(`todo:${todoId}`, {
+        
+        const newTodo = {
             id: todoId,
             title: title,
             completed: 'false',
             createdAt: createdAt,
             userId: userId
-        });
+        };
+        if (dueDate) newTodo.dueDate = dueDate;
+
+        await redisClient.hSet(`todo:${todoId}`, newTodo);
 
         await redisClient.sAdd(`user:${userId}:todos`, todoId);
 
         res.status(201).json({
-            id: todoId,
-            title,
-            completed: false,
-            createdAt,
-            userId
+            ...newTodo,
+            completed: false
         });
     } catch (error) {
         console.error(error);
@@ -64,7 +64,7 @@ const createTodo = async (req, res) => {
 const updateTodo = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, completed } = req.body;
+        const { title, completed, dueDate } = req.body;
         const userId = req.user.id;
 
         const todo = await redisClient.hGetAll(`todo:${id}`);
@@ -75,6 +75,7 @@ const updateTodo = async (req, res) => {
         // Update fields if provided
         if (title !== undefined) await redisClient.hSet(`todo:${id}`, 'title', title);
         if (completed !== undefined) await redisClient.hSet(`todo:${id}`, 'completed', completed.toString());
+        if (dueDate !== undefined) await redisClient.hSet(`todo:${id}`, 'dueDate', dueDate);
 
         const updatedTodo = await redisClient.hGetAll(`todo:${id}`);
         res.json({

@@ -1,0 +1,33 @@
+# STEP 1 - Open Docker Desktop first
+# (Click Docker Desktop icon, wait for whale to stop animating)
+
+# STEP 2 - Open PowerShell as Administrator and go to project
+cd "C:\Users\HP\OneDrive\Desktop\To-Do List"
+
+# STEP 3 - Start Minikube
+minikube start --driver=docker
+
+# STEP 4 - Point Docker to Minikube (run every new terminal)
+minikube docker-env | Invoke-Expression
+
+# STEP 5 - Build images
+docker build -t todo-backend ./backend
+docker build -t todo-frontend ./frontend
+
+# STEP 6 - Apply Kubernetes config files
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/config-map.yaml
+kubectl apply -f k8s/backend.yaml
+kubectl apply -f k8s/frontend.yaml
+
+# STEP 7 - Restart deployments to pick up new images
+kubectl rollout restart deployment/todo-backend
+kubectl rollout restart deployment/todo-frontend
+
+# STEP 8 - Watch pods until all show Running
+kubectl get pods -w
+# Press Ctrl+C when all 3 pods show STATUS = Running
+
+# STEP 9 - Get URL and open in browser
+minikube service frontend --url
